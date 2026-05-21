@@ -365,6 +365,18 @@ async function main(): Promise<void> {
 		});
 
 		app.all('/mcp', async (req: Request, res: Response) => {
+			// CORS: Claude.ai's connector runs in a browser and sends a
+			// preflight; it must also be able to read the session id header.
+			res.setHeader('Access-Control-Allow-Origin', '*');
+			res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+			res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, mcp-session-id, mcp-protocol-version');
+			res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
+
+			if (req.method === 'OPTIONS') {
+				res.status(204).end();
+				return;
+			}
+
 			const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
 			if (req.method === 'DELETE' && sessionId && transports.has(sessionId)) {
@@ -395,6 +407,14 @@ async function main(): Promise<void> {
 				}
 
 				await transport.handleRequest(req, res, req.body);
+				return;
+			}
+
+			// GET opens the server-to-client SSE stream for an existing session.
+			if (req.method === 'GET' && sessionId && transports.has(sessionId)) {
+				const session = transports.get(sessionId)!;
+				session.lastAccess = Date.now();
+				await session.transport.handleRequest(req, res);
 				return;
 			}
 
