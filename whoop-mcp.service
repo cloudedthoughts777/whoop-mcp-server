@@ -1,0 +1,17 @@
+[Unit]
+Description=Whoop MCP Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/automation/mcp-servers/whoop
+ExecStart=/usr/bin/node --env-file=.env dist/index.js
+Restart=always
+RestartSec=10
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=whoop-mcp
+
+[Install]
+WantedBy=multi-user.target
