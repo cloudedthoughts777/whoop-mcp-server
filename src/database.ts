@@ -368,6 +368,10 @@ export class WhoopDatabase {
 		`).all(startDate, endDate) as DbWorkout[];
 	}
 
+	getWorkoutById(id: string): DbWorkout | null {
+		return this.db.prepare('SELECT * FROM workouts WHERE id = ?').get(id) as DbWorkout | undefined ?? null;
+	}
+
 	getRecoveryTrends(days: number): RecoveryTrendRow[] {
 		return this.db.prepare(`
 			SELECT DATE(created_at) as date, recovery_score, hrv_rmssd as hrv, resting_hr as rhr

@@ -10,6 +10,37 @@ import { WhoopSync } from './sync.js';
 interface ToolArguments {
 	days?: number;
 	full?: boolean;
+	workout_id?: string;
+}
+
+const SPORT_NAMES: Record<number, string> = {
+	0: 'Running', 1: 'Cycling', 16: 'Baseball', 17: 'Basketball', 18: 'Rowing',
+	19: 'Fencing', 20: 'Field Hockey', 21: 'Football', 22: 'Golf', 24: 'Ice Hockey',
+	25: 'Lacrosse', 27: 'Rugby', 28: 'Sailing', 29: 'Skiing', 30: 'Soccer',
+	31: 'Softball', 32: 'Squash', 33: 'Swimming', 34: 'Tennis', 35: 'Track & Field',
+	36: 'Volleyball', 37: 'Water Polo', 38: 'Wrestling', 39: 'Boxing', 42: 'Dance',
+	43: 'Pilates', 44: 'Yoga', 45: 'Weightlifting', 47: 'Cross Country Skiing',
+	48: 'Functional Fitness', 49: 'Duathlon', 51: 'Gymnastics', 52: 'Hiking/Rucking',
+	53: 'Horseback Riding', 55: 'Kayaking', 56: 'Martial Arts', 57: 'Mountain Biking',
+	59: 'Powerlifting', 60: 'Rock Climbing', 61: 'Paddleboarding', 62: 'Triathlon',
+	63: 'Walking', 64: 'Surfing', 65: 'Elliptical', 66: 'Stairmaster', 70: 'Meditation',
+	71: 'Other', 73: 'Diving', 74: 'Operations - Tactical', 75: 'Operations - Medical',
+	76: 'Operations - Flying', 77: 'Operations - Water', 82: 'Ultimate', 83: 'Climber',
+	84: 'Jumping Rope', 85: 'Australian Football', 86: 'Skateboarding', 87: 'Coaching',
+	88: 'Ice Bath', 89: 'Commuting', 90: 'Gaming', 91: 'Snowboarding', 92: 'Motocross',
+	93: 'Caddying', 94: 'Obstacle Course Racing', 95: 'Motor Racing', 96: 'HIIT',
+	97: 'Spin', 98: 'Jiu Jitsu', 99: 'Manual Labor', 100: 'Cricket', 101: 'Pickleball',
+	102: 'Inline Skating', 103: 'Box Fitness', 104: 'Spikeball', 105: 'Wheelchair Pushing',
+	106: 'Paddle Tennis', 107: 'Barre', 108: 'Stage Performance', 109: 'High Stress Work',
+	110: 'Parkour', 111: 'Gaelic Football', 112: 'Hurling/Camogie', 113: 'Circus Arts',
+	121: 'Massage Therapy', 123: 'Strength Trainer', 125: 'Watching Sports', 126: 'Assault Bike',
+	127: 'Kickboxing', 128: 'Stretching', 230: 'Table Tennis', 231: 'Badminton',
+	232: 'Netball', 233: 'Sauna', 234: 'Disc Golf', 235: 'Yard Work', 236: 'Air Compression',
+	237: 'Percussive Massage', 238: 'Paintball', 239: 'Ice Skating', 240: 'Handball',
+};
+
+function sportName(id: number): string {
+	return SPORT_NAMES[id] ?? `Sport ${id}`;
 }
 
 const config = {
@@ -92,6 +123,17 @@ function validateBoolean(value: unknown): boolean {
 	return false;
 }
 
+function validateActivityDays(value: unknown): number {
+	if (value === undefined || value === null) return 7;
+	const num = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+	if (Number.isNaN(num) || num < 1) return 7;
+	return Math.min(num, 30);
+}
+
+function kjToCal(kj: number | null): number | null {
+	return kj == null ? null : Math.round(kj / 4.184);
+}
+
 function createMcpServer(): Server {
 	const server = new Server(
 		{ name: 'whoop-mcp-server', version: '1.0.0' },
@@ -133,6 +175,24 @@ function createMcpServer(): Server {
 				},
 			},
 			{
+				name: 'get_activities',
+				description: 'List individual workouts/activities with sport, duration, strain, HR, and calories.',
+				inputSchema: {
+					type: 'object',
+					properties: { days: { type: 'number', description: 'Number of days to look back (default: 7, max: 30)' } },
+					required: [],
+				},
+			},
+			{
+				name: 'get_activity_detail',
+				description: 'Get full detail for a single workout including HR zone breakdown.',
+				inputSchema: {
+					type: 'object',
+					properties: { workout_id: { type: 'string', description: 'The workout UUID' } },
+					required: ['workout_id'],
+				},
+			},
+			{
 				name: 'sync_data',
 				description: 'Manually trigger a data sync from Whoop.',
 				inputSchema: {
@@ -154,7 +214,7 @@ function createMcpServer(): Server {
 		const typedArgs = (args ?? {}) as ToolArguments;
 
 		try {
-			const dataTools = ['get_today', 'get_recovery_trends', 'get_sleep_analysis', 'get_strain_history'];
+			const dataTools = ['get_today', 'get_recovery_trends', 'get_sleep_analysis', 'get_strain_history', 'get_activities', 'get_activity_detail'];
 			if (dataTools.includes(name)) {
 				const tokens = db.getTokens();
 				if (!tokens) {
@@ -278,6 +338,80 @@ function createMcpServer(): Server {
 					const avgCalories = trends.reduce((sum, d) => sum + (d.calories || 0), 0) / trends.length;
 
 					response += `\n## Averages\n- **Daily Strain**: ${avgStrain.toFixed(1)}\n- **Daily Calories**: ${Math.round(avgCalories)} kcal\n`;
+
+					return { content: [{ type: 'text', text: response }] };
+				}
+
+				case 'get_activities': {
+					const days = validateActivityDays(typedArgs.days);
+					const end = new Date();
+					const start = new Date();
+					start.setDate(start.getDate() - days);
+					const workouts = db.getWorkoutsByDateRange(start.toISOString(), end.toISOString());
+
+					if (workouts.length === 0) {
+						return { content: [{ type: 'text', text: `No activities found in the last ${days} days.` }] };
+					}
+
+					let response = `# Activities (Last ${days} Days)\n\n`;
+					response += '| Date | Sport | Duration | Strain | Avg HR | Max HR | Calories |\n';
+					response += '|------|-------|----------|--------|--------|--------|----------|\n';
+
+					for (const w of workouts) {
+						const duration = new Date(w.end_time).getTime() - new Date(w.start_time).getTime();
+						const cal = kjToCal(w.kilojoule);
+						response += `| ${formatDate(w.start_time)} | ${sportName(w.sport_id)} | ${formatDuration(duration)} | `;
+						response += `${w.strain?.toFixed(1) ?? 'N/A'} | ${w.avg_hr ?? 'N/A'} | ${w.max_hr ?? 'N/A'} | ${cal ?? 'N/A'} |\n`;
+					}
+
+					response += `\n_${workouts.length} activities. Use get_activity_detail with a workout_id for HR zone breakdown._\n`;
+					return { content: [{ type: 'text', text: response }] };
+				}
+
+				case 'get_activity_detail': {
+					const workoutId = typeof typedArgs.workout_id === 'string' ? typedArgs.workout_id : '';
+					if (!workoutId) {
+						return { content: [{ type: 'text', text: 'workout_id is required.' }] };
+					}
+
+					const w = db.getWorkoutById(workoutId);
+					if (!w) {
+						return { content: [{ type: 'text', text: `No workout found with id ${workoutId}. It may be outside the synced range — try sync_data with full=true.` }] };
+					}
+
+					const duration = new Date(w.end_time).getTime() - new Date(w.start_time).getTime();
+					const cal = kjToCal(w.kilojoule);
+
+					let response = `# ${sportName(w.sport_id)} — ${formatDate(w.start_time)}\n\n`;
+					response += `- **Workout ID**: ${w.id}\n`;
+					response += `- **Sport**: ${sportName(w.sport_id)} (id ${w.sport_id})\n`;
+					response += `- **Start**: ${new Date(w.start_time).toLocaleString()}\n`;
+					response += `- **End**: ${new Date(w.end_time).toLocaleString()}\n`;
+					response += `- **Duration**: ${formatDuration(duration)}\n`;
+					response += `- **Strain**: ${w.strain?.toFixed(1) ?? 'N/A'} ${w.strain != null ? `(${getStrainZone(w.strain)})` : ''}\n`;
+					response += `- **Avg HR**: ${w.avg_hr ?? 'N/A'} bpm\n`;
+					response += `- **Max HR**: ${w.max_hr ?? 'N/A'} bpm\n`;
+					response += `- **Calories**: ${cal ?? 'N/A'} kcal\n`;
+					response += `- **Score state**: ${w.score_state}\n`;
+
+					const zones = [
+						{ label: 'Zone 0 (Rest)', ms: w.zone_zero_milli },
+						{ label: 'Zone 1 (50-60%)', ms: w.zone_one_milli },
+						{ label: 'Zone 2 (60-70%)', ms: w.zone_two_milli },
+						{ label: 'Zone 3 (70-80%)', ms: w.zone_three_milli },
+						{ label: 'Zone 4 (80-90%)', ms: w.zone_four_milli },
+						{ label: 'Zone 5 (90-100%)', ms: w.zone_five_milli },
+					];
+					const totalZoneMs = zones.reduce((sum, z) => sum + (z.ms ?? 0), 0);
+
+					if (totalZoneMs > 0) {
+						response += `\n## HR Zone Breakdown\n\n| Zone | Time | % |\n|------|------|---|\n`;
+						for (const z of zones) {
+							const ms = z.ms ?? 0;
+							const pct = totalZoneMs > 0 ? ((ms / totalZoneMs) * 100).toFixed(1) : '0.0';
+							response += `| ${z.label} | ${formatDuration(ms)} | ${pct}% |\n`;
+						}
+					}
 
 					return { content: [{ type: 'text', text: response }] };
 				}
