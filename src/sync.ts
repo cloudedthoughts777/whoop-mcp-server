@@ -30,17 +30,34 @@ export class WhoopSync {
 		const start = startDate.toISOString();
 		const end = endDate.toISOString();
 
+		const fetchOne = async <T>(label: string, p: Promise<T[]>): Promise<T[]> => {
+			try {
+				return await p;
+			} catch (err) {
+				process.stderr.write(`[sync] fetch ${label} failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+				return [];
+			}
+		};
+
 		const [cycles, recoveries, sleeps, workouts] = await Promise.all([
-			this.client.getAllCycles({ start, end }),
-			this.client.getAllRecoveries({ start, end }),
-			this.client.getAllSleeps({ start, end }),
-			this.client.getAllWorkouts({ start, end }),
+			fetchOne('cycles', this.client.getAllCycles({ start, end })),
+			fetchOne('recoveries', this.client.getAllRecoveries({ start, end })),
+			fetchOne('sleeps', this.client.getAllSleeps({ start, end })),
+			fetchOne('workouts', this.client.getAllWorkouts({ start, end })),
 		]);
 
-		if (cycles.length > 0) this.db.upsertCycles(cycles);
-		if (recoveries.length > 0) this.db.upsertRecoveries(recoveries);
-		if (sleeps.length > 0) this.db.upsertSleeps(sleeps);
-		if (workouts.length > 0) this.db.upsertWorkouts(workouts);
+		const upsertSafe = (label: string, fn: () => void): void => {
+			try {
+				fn();
+			} catch (err) {
+				process.stderr.write(`[sync] upsert ${label} failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+			}
+		};
+
+		if (cycles.length > 0) upsertSafe('cycles', () => this.db.upsertCycles(cycles));
+		if (recoveries.length > 0) upsertSafe('recoveries', () => this.db.upsertRecoveries(recoveries));
+		if (sleeps.length > 0) upsertSafe('sleeps', () => this.db.upsertSleeps(sleeps));
+		if (workouts.length > 0) upsertSafe('workouts', () => this.db.upsertWorkouts(workouts));
 
 		this.db.updateSyncState(
 			startDate.toISOString().split('T')[0],

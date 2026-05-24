@@ -28,6 +28,7 @@ interface PaginationParams {
 
 export class WhoopClient {
 	private tokens: WhoopTokens | null = null;
+	private refreshInFlight: Promise<void> | null = null;
 	private readonly clientId: string;
 	private readonly clientSecret: string;
 	private readonly redirectUri: string;
@@ -84,6 +85,17 @@ export class WhoopClient {
 	}
 
 	private async refreshTokens(): Promise<void> {
+		if (this.refreshInFlight) {
+			return this.refreshInFlight;
+		}
+
+		this.refreshInFlight = this.doRefresh().finally(() => {
+			this.refreshInFlight = null;
+		});
+		return this.refreshInFlight;
+	}
+
+	private async doRefresh(): Promise<void> {
 		if (!this.tokens?.refresh_token) {
 			throw new Error('No refresh token available');
 		}
@@ -96,6 +108,7 @@ export class WhoopClient {
 				refresh_token: this.tokens.refresh_token,
 				client_id: this.clientId,
 				client_secret: this.clientSecret,
+				scope: 'offline',
 			}),
 		});
 

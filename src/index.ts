@@ -163,8 +163,8 @@ function createMcpServer(): Server {
 				client.setTokens(tokens);
 				try {
 					await sync.smartSync();
-				} catch {
-					// Continue with cached data
+				} catch (err) {
+					process.stderr.write(`[smartSync] failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
 				}
 			}
 
@@ -353,7 +353,9 @@ async function main(): Promise<void> {
 			try {
 				const tokens = await client.exchangeCodeForTokens(code);
 				db.saveTokens(tokens);
-				sync.syncDays(90).catch(() => {});
+				sync.syncDays(90).catch(err => {
+					process.stderr.write(`[postAuthSync] failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`);
+				});
 				res.send('Authorization successful! You can close this window.');
 			} catch {
 				res.status(500).send('Authorization failed. Please try again.');
